@@ -57,12 +57,24 @@ public class AggregatorService {
 
 		logger.debug("Cache miss for symbol: {}, fetching from Finnhub", upperSymbol);
 
+		// Fetch critical data in parallel (profile, quote, metrics)
+		// Candles are optional - if they fail, we'll use empty data
+		Mono<com.GlobeLine.stock_aggregator.dto.finnhub.FinnhubCandleDto> candlesMono = finnhubClient
+				.getCandles(upperSymbol)
+				.onErrorResume(ex -> {
+					logger.warn("Failed to fetch candles for symbol: {} - continuing without OHLC data. Error: {}", 
+							upperSymbol, ex.getMessage());
+					// Return empty candle DTO if candles fail
+					return Mono.just(new com.GlobeLine.stock_aggregator.dto.finnhub.FinnhubCandleDto(
+							null, null, null, null, null, null, "error"));
+				});
+
 		// Fetch all data in parallel using Mono.zip
 		return Mono.zip(
 				finnhubClient.getCompanyProfile(upperSymbol),
 				finnhubClient.getQuote(upperSymbol),
 				finnhubClient.getMetrics(upperSymbol),
-				finnhubClient.getCandles(upperSymbol))
+				candlesMono)
 				.map(tuple -> {
 					var profile = tuple.getT1();
 					var quote = tuple.getT2();
