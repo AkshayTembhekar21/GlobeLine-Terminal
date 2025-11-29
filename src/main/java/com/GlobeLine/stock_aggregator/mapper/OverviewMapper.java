@@ -50,12 +50,16 @@ public class OverviewMapper {
 				quote.percentChange(),
 				quote.high(),
 				quote.low(),
-				quote.volume(),
+				// Use quote volume if available, otherwise fallback to average volume from metrics
+				getVolumeWithFallback(quote, metrics),
 				profile.marketCap(),
 
 				// Financial Snapshot
+				// Revenue TTM (per share) - confirmed key exists
 				metrics.metricValue("revenuePerShareTTM"),
-				metrics.metricValue("netIncomePerShareTTM"),
+				// Net Income TTM - calculate from netProfitMarginTTM * revenuePerShareTTM
+				// (since netIncomePerShareTTM doesn't exist in Finnhub response)
+				calculateNetIncomeTTM(metrics),
 				metrics.metricValue("epsTTM"),
 				metrics.metricValue("peAnnual"),
 				metrics.metricValue("dividendYieldIndicatedAnnual"),
@@ -98,6 +102,56 @@ public class OverviewMapper {
 						i < closes.size() ? closes.get(i) : null,
 						i < volumes.size() ? volumes.get(i) : null))
 				.toList();
+	}
+
+	/**
+	 * Gets volume from quote, with fallback to average volume metrics if quote volume is null.
+	 * Falls back to 10DayAverageTradingVolume or 3MonthAverageTradingVolume.
+	 */
+	private BigDecimal getVolumeWithFallback(FinnhubQuoteDto quote, FinnhubMetricsDto metrics) {
+		// First try to get volume from quote (real-time)
+		if (quote.volume() != null) {
+			return quote.volume();
+		}
+		
+		// If quote volume is null, try average volumes from metrics as fallback
+		if (metrics != null) {
+			// Try 10-day average first (more recent)
+			BigDecimal avgVolume = metrics.metricValue("10DayAverageTradingVolume");
+			if (avgVolume != null) {
+				return avgVolume;
+			}
+			
+			// Fallback to 3-month average
+			avgVolume = metrics.metricValue("3MonthAverageTradingVolume");
+			if (avgVolume != null) {
+				return avgVolume;
+			}
+		}
+		
+		return null;
+	}
+
+	/**
+	 * Calculates Net Income TTM from netProfitMarginTTM and revenuePerShareTTM.
+	 * Formula: Net Income = Revenue * Net Profit Margin
+	 * Since Finnhub doesn't provide netIncomePerShareTTM directly.
+	 */
+	private BigDecimal calculateNetIncomeTTM(FinnhubMetricsDto metrics) {
+		if (metrics == null) {
+			return null;
+		}
+		
+		BigDecimal revenuePerShare = metrics.metricValue("revenuePerShareTTM");
+		BigDecimal netProfitMargin = metrics.metricValue("netProfitMarginTTM");
+		
+		if (revenuePerShare != null && netProfitMargin != null) {
+			// Net Income = Revenue * (Net Profit Margin / 100)
+			// Net Profit Margin is typically a percentage (e.g., 25.5 means 25.5%)
+			return revenuePerShare.multiply(netProfitMargin).divide(BigDecimal.valueOf(100), 4, java.math.RoundingMode.HALF_UP);
+		}
+		
+		return null;
 	}
 
 	/**

@@ -51,5 +51,12 @@ public record FinnhubMetricsDto(
 		
 		return null;
 	}
+
+	/**
+	 * Returns all available metric keys (for debugging).
+	 */
+	public java.util.Set<String> getAllKeys() {
+		return metrics != null ? metrics.keySet() : java.util.Collections.emptySet();
+	}
 }
 
