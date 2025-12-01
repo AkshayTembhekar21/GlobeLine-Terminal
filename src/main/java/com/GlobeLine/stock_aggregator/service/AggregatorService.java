@@ -1,6 +1,7 @@
 package com.GlobeLine.stock_aggregator.service;
 
 import java.time.Instant;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +29,11 @@ public class AggregatorService {
 	private final FinnhubClient finnhubClient;
 	private final OverviewMapper mapper;
 	private final Cache<String, TickerOverviewDto> overviewCache;
+	
+	// In-flight request map to prevent duplicate API calls for the same symbol
+	// Key: symbol, Value: Mono<TickerOverviewDto> that's currently being executed
+	// Multiple concurrent requests for the same symbol will share the same Mono
+	private final ConcurrentHashMap<String, Mono<TickerOverviewDto>> inFlightRequests = new ConcurrentHashMap<>();
 
 	public AggregatorService(
 			FinnhubClient finnhubClient,
@@ -40,7 +46,8 @@ public class AggregatorService {
 
 	/**
 	 * Gets the overview for a stock symbol.
-	 * First checks cache, then fetches from Finnhub if needed.
+	 * First checks cache, then checks in-flight requests, then fetches from Finnhub if needed.
+	 * Prevents duplicate API calls for concurrent requests of the same symbol.
 	 * 
 	 * @param symbol Stock symbol (e.g., "AAPL")
 	 * @return Mono containing the ticker overview
@@ -48,15 +55,23 @@ public class AggregatorService {
 	public Mono<TickerOverviewDto> getOverview(String symbol) {
 		String upperSymbol = symbol.toUpperCase();
 
-		// Check cache first
+		// Step 1: Check cache first (synchronous check for completed results)
 		TickerOverviewDto cached = overviewCache.getIfPresent(upperSymbol);
 		if (cached != null) {
 			logger.debug("Cache hit for symbol: {}", upperSymbol);
 			return Mono.just(cached);
 		}
 
-		logger.debug("Cache miss for symbol: {}, fetching from Finnhub", upperSymbol);
+		// Step 2: Check if there's already an in-flight request for this symbol
+		Mono<TickerOverviewDto> inFlight = inFlightRequests.get(upperSymbol);
+		if (inFlight != null) {
+			logger.debug("In-flight request found for symbol: {}, sharing the same operation", upperSymbol);
+			return inFlight;
+		}
 
+		logger.debug("Cache miss and no in-flight request for symbol: {}, creating new fetch operation", upperSymbol);
+
+		// Step 3: Create new fetch operation
 		// Fetch critical data in parallel (profile, quote, metrics)
 		// Candles are optional - if they fail, we'll use empty data
 		Mono<com.GlobeLine.stock_aggregator.dto.finnhub.FinnhubCandleDto> candlesMono = finnhubClient
@@ -69,8 +84,8 @@ public class AggregatorService {
 							null, null, null, null, null, null, "error"));
 				});
 
-		// Fetch all data in parallel using Mono.zip
-		return Mono.zip(
+		// Create the fetch operation
+		Mono<TickerOverviewDto> fetchOperation = Mono.zip(
 				finnhubClient.getCompanyProfile(upperSymbol),
 				finnhubClient.getQuote(upperSymbol),
 				finnhubClient.getMetrics(upperSymbol),
@@ -112,7 +127,26 @@ public class AggregatorService {
 					}
 					return Mono.error(new ServiceUnavailableException(
 							"Temporarily unavailable - try again later", ex));
+				})
+				// Cache the result so multiple subscribers get the same result
+				// This ensures that if multiple requests come in simultaneously, they all share the same operation
+				.cache()
+				// Clean up in-flight map when operation completes (success or error)
+				.doFinally(signalType -> {
+					inFlightRequests.remove(upperSymbol);
+					logger.debug("Removed in-flight request for symbol: {} (signal: {})", upperSymbol, signalType);
 				});
+
+		// Store in in-flight map before returning
+		// Use putIfAbsent to handle race condition where two threads might create operations simultaneously
+		Mono<TickerOverviewDto> existing = inFlightRequests.putIfAbsent(upperSymbol, fetchOperation);
+		if (existing != null) {
+			// Another thread beat us to it, use their operation instead
+			logger.debug("Another thread created in-flight request for symbol: {}, using it", upperSymbol);
+			return existing;
+		}
+
+		return fetchOperation;
 	}
 }
 
