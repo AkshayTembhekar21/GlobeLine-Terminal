@@ -1,152 +1,134 @@
 package com.GlobeLine.stock_aggregator.service;
 
-import java.time.Instant;
-import java.util.concurrent.ConcurrentHashMap;
+import jakarta.annotation.PostConstruct;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import com.github.benmanes.caffeine.cache.Cache;
-
-import com.GlobeLine.stock_aggregator.connectors.FinnhubClient;
 import com.GlobeLine.stock_aggregator.connectors.FinnhubClient.SymbolNotFoundException;
 import com.GlobeLine.stock_aggregator.dto.TickerOverviewDto;
 import com.GlobeLine.stock_aggregator.exception.ServiceUnavailableException;
-import com.GlobeLine.stock_aggregator.mapper.OverviewMapper;
+import com.GlobeLine.stock_aggregator.metrics.AggregationMetrics;
 
+import io.micrometer.core.instrument.Timer;
 import reactor.core.publisher.Mono;
 
 /**
- * Aggregates data from multiple Finnhub endpoints and returns a unified overview.
- * Implements caching and parallel API calls for performance.
+ * Decorator service that wraps CoreAggregatorService and adds metrics instrumentation.
+ * 
+ * This class implements the Decorator Pattern:
+ * - It wraps the CoreAggregatorService (the component being decorated)
+ * - It implements the same interface (getOverview method)
+ * - It adds metrics behavior without modifying the core business logic
+ * - The core service has no knowledge of metrics or this decorator
+ * 
+ * How it works:
+ * 1. Client calls AggregatorService.getOverview()
+ * 2. Decorator starts timing and delegates to CoreAggregatorService
+ * 3. Core service performs business logic (no metrics knowledge)
+ * 4. Decorator wraps the returned Mono to add metrics on success/error
+ * 5. Decorator stops timing when operation completes
+ */
+/**
+ * Decorator service that wraps CoreAggregatorService and adds metrics instrumentation.
+ * 
+ * This class implements TWO patterns:
+ * 1. Decorator Pattern - wraps core service and adds metrics behavior
+ * 2. Observer Pattern - implements AggregationEventObserver to receive business events
+ * 
+ * The core service notifies this decorator about events (cache hits, etc.),
+ * and this decorator handles recording metrics. Core service has no metrics knowledge!
  */
 @Service
-public class AggregatorService {
+public class AggregatorService implements AggregationEventObserver {
 
 	private static final Logger logger = LoggerFactory.getLogger(AggregatorService.class);
 
-	private final FinnhubClient finnhubClient;
-	private final OverviewMapper mapper;
-	private final Cache<String, TickerOverviewDto> overviewCache;
-	
-	// In-flight request map to prevent duplicate API calls for the same symbol
-	// Key: symbol, Value: Mono<TickerOverviewDto> that's currently being executed
-	// Multiple concurrent requests for the same symbol will share the same Mono
-	private final ConcurrentHashMap<String, Mono<TickerOverviewDto>> inFlightRequests = new ConcurrentHashMap<>();
+	private final CoreAggregatorService coreService;
+	private final AggregationMetrics metrics;
 
-	public AggregatorService(
-			FinnhubClient finnhubClient,
-			OverviewMapper mapper,
-			Cache<String, TickerOverviewDto> overviewCache) {
-		this.finnhubClient = finnhubClient;
-		this.mapper = mapper;
-		this.overviewCache = overviewCache;
+	public AggregatorService(CoreAggregatorService coreService, AggregationMetrics metrics) {
+		this.coreService = coreService;
+		this.metrics = metrics;
+	}
+	
+	/**
+	 * Wire up the observer pattern after Spring creates this bean.
+	 * This method runs after dependency injection is complete.
+	 */
+	@PostConstruct
+	public void wireObserver() {
+		// Set this decorator as the observer for core service
+		// Core service will call our observer methods when events occur
+		coreService.setObserver(this);
+	}
+
+	@Override
+	public void onCacheHit() {
+		metrics.recordCacheHit();
+	}
+
+	@Override
+	public void onCacheMiss() {
+		metrics.recordCacheMiss();
+	}
+
+	@Override
+	public void onInFlightSharing() {
+		metrics.recordInFlightSharing();
 	}
 
 	/**
-	 * Gets the overview for a stock symbol.
-	 * First checks cache, then checks in-flight requests, then fetches from Finnhub if needed.
-	 * Prevents duplicate API calls for concurrent requests of the same symbol.
+	 * Gets the overview for a stock symbol with automatic metrics instrumentation.
+	 * 
+	 * This method:
+	 * - Starts timing before delegating to core service
+	 * - Wraps the Mono returned by core service with metrics recording
+	 * - Automatically records errors by type (SymbolNotFound, ServiceUnavailable, etc.)
+	 * - Stops timing when operation completes
+	 * 
+	 * All metrics are added automatically - no explicit metrics calls in business logic!
 	 * 
 	 * @param symbol Stock symbol (e.g., "AAPL")
 	 * @return Mono containing the ticker overview
 	 */
 	public Mono<TickerOverviewDto> getOverview(String symbol) {
 		String upperSymbol = symbol.toUpperCase();
-
-		// Step 1: Check cache first (synchronous check for completed results)
-		TickerOverviewDto cached = overviewCache.getIfPresent(upperSymbol);
-		if (cached != null) {
-			logger.debug("Cache hit for symbol: {}", upperSymbol);
-			return Mono.just(cached);
-		}
-
-		// Step 2: Check if there's already an in-flight request for this symbol
-		Mono<TickerOverviewDto> inFlight = inFlightRequests.get(upperSymbol);
-		if (inFlight != null) {
-			logger.debug("In-flight request found for symbol: {}, sharing the same operation", upperSymbol);
-			return inFlight;
-		}
-
-		logger.debug("Cache miss and no in-flight request for symbol: {}, creating new fetch operation", upperSymbol);
-
-		// Step 3: Create new fetch operation
-		// Fetch critical data in parallel (profile, quote, metrics)
-		// Candles are optional - if they fail, we'll use empty data
-		Mono<com.GlobeLine.stock_aggregator.dto.finnhub.FinnhubCandleDto> candlesMono = finnhubClient
-				.getCandles(upperSymbol)
-				.onErrorResume(ex -> {
-					logger.warn("Failed to fetch candles for symbol: {} - continuing without OHLC data. Error: {}", 
-							upperSymbol, ex.getMessage());
-					// Return empty candle DTO if candles fail
-					return Mono.just(new com.GlobeLine.stock_aggregator.dto.finnhub.FinnhubCandleDto(
-							null, null, null, null, null, null, "error"));
-				});
-
-		// Create the fetch operation
-		Mono<TickerOverviewDto> fetchOperation = Mono.zip(
-				finnhubClient.getCompanyProfile(upperSymbol),
-				finnhubClient.getQuote(upperSymbol),
-				finnhubClient.getMetrics(upperSymbol),
-				candlesMono)
-				.map(tuple -> {
-					var profile = tuple.getT1();
-					var quote = tuple.getT2();
-					var metrics = tuple.getT3();
-					var candles = tuple.getT4();
-
-					// Normalize and combine data
-					TickerOverviewDto overview = mapper.mapToOverview(profile, quote, metrics, candles);
-
-					// Store in cache
-					overviewCache.put(upperSymbol, overview);
-
-					logger.info("Successfully aggregated overview for symbol: {}", upperSymbol);
-					return overview;
+		
+		// Start timing the entire operation
+		Timer.Sample sample = metrics.startTimer();
+		
+		// Delegate to core service - it knows nothing about metrics
+		Mono<TickerOverviewDto> result = coreService.getOverview(upperSymbol);
+		
+		// Wrap the Mono with metrics instrumentation
+		// This is where we add cross-cutting concerns without touching business logic
+		return result
+				// Record metrics on success - we can add cache hit detection here if needed
+				.doOnSuccess(overview -> {
+					// Success - timing will be recorded in doFinally
+					logger.debug("Successfully completed aggregation for symbol: {}", upperSymbol);
 				})
-				.onErrorResume(SymbolNotFoundException.class, ex -> {
-					logger.warn("Symbol not found: {}", upperSymbol);
-					return Mono.error(ex);
+				// Record error metrics automatically based on exception type
+				.doOnError(SymbolNotFoundException.class, ex -> {
+					metrics.recordSymbolNotFound();
 				})
-				.onErrorResume(Exception.class, ex -> {
-					logger.error("Error fetching data for symbol: {}", upperSymbol, ex);
-					// Try to return stale cache if available
-					TickerOverviewDto stale = overviewCache.getIfPresent(upperSymbol);
-					if (stale != null) {
-						logger.info("Returning stale cache for symbol: {}", upperSymbol);
-						// Update lastUpdated to indicate stale data
-						TickerOverviewDto staleWithTimestamp = new TickerOverviewDto(
-								stale.companyName(), stale.sector(), stale.country(), stale.website(),
-								stale.currentPrice(), stale.change(), stale.percentChange(),
-								stale.dayHigh(), stale.dayLow(), stale.volume(), stale.marketCap(),
-								stale.revenueTTM(), stale.netIncomeTTM(), stale.eps(),
-								stale.peRatio(), stale.dividendYield(), stale.ohlcData(),
-								stale.description(), Instant.now());
-						return Mono.just(staleWithTimestamp);
+				.doOnError(ServiceUnavailableException.class, ex -> {
+					metrics.recordServiceUnavailable();
+				})
+				.doOnError(Exception.class, ex -> {
+					// Generic error - ServiceUnavailableException already handled above
+					// But if there's any other exception, we could log it here
+					if (!(ex instanceof ServiceUnavailableException) && 
+					    !(ex instanceof SymbolNotFoundException)) {
+						logger.error("Unexpected error type for symbol: {}", upperSymbol, ex);
 					}
-					return Mono.error(new ServiceUnavailableException(
-							"Temporarily unavailable - try again later", ex));
 				})
-				// Cache the result so multiple subscribers get the same result
-				// This ensures that if multiple requests come in simultaneously, they all share the same operation
-				.cache()
-				// Clean up in-flight map when operation completes (success or error)
+				// Always stop the timer when operation completes (success or error)
 				.doFinally(signalType -> {
-					inFlightRequests.remove(upperSymbol);
-					logger.debug("Removed in-flight request for symbol: {} (signal: {})", upperSymbol, signalType);
+					metrics.stopTimer(sample);
+					logger.debug("Completed aggregation for symbol: {} with signal: {}", upperSymbol, signalType);
 				});
-
-		// Store in in-flight map before returning
-		// Use putIfAbsent to handle race condition where two threads might create operations simultaneously
-		Mono<TickerOverviewDto> existing = inFlightRequests.putIfAbsent(upperSymbol, fetchOperation);
-		if (existing != null) {
-			// Another thread beat us to it, use their operation instead
-			logger.debug("Another thread created in-flight request for symbol: {}, using it", upperSymbol);
-			return existing;
-		}
-
-		return fetchOperation;
 	}
 }
-
