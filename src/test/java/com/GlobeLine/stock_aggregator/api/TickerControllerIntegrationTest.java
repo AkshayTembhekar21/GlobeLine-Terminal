@@ -8,12 +8,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import com.GlobeLine.stock_aggregator.config.FinnhubApiProperties;
+import com.GlobeLine.stock_aggregator.config.WebClientConfig;
 
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -43,8 +45,10 @@ import okhttp3.mockwebserver.MockWebServer;
  * 4. Tests end-to-end flow - HTTP request → Controller → Service → HTTP response
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(TickerControllerIntegrationTest.MockWebServerConfiguration.class)
 @TestPropertySource(properties = {
-		"finnhub.api.key=test-key"
+		"finnhub.api.key=test-key",
+		"spring.main.allow-bean-definition-overriding=true"
 })
 class TickerControllerIntegrationTest {
 

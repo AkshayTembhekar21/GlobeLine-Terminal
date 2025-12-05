@@ -131,16 +131,29 @@ class CoreAggregatorServiceTest {
 	}
 
 	@Test
-	void getOverview_SymbolNotFound_PropagatesException() {
+	void getOverview_SymbolNotFound_ReturnsServiceUnavailable() {
 		// Arrange
 		String symbol = "INVALID";
 		when(overviewCache.getIfPresent(symbol)).thenReturn(null);
+		
+		// All API calls will fail with SymbolNotFoundException when symbol is invalid
+		SymbolNotFoundException notFoundException = new SymbolNotFoundException("Symbol not found: INVALID", null);
 		when(finnhubClient.getCompanyProfile(symbol))
-				.thenReturn(Mono.error(new SymbolNotFoundException("Symbol not found: INVALID", null)));
+				.thenReturn(Mono.error(notFoundException));
+		when(finnhubClient.getQuote(symbol))
+				.thenReturn(Mono.error(notFoundException));
+		when(finnhubClient.getMetrics(symbol))
+				.thenReturn(Mono.error(notFoundException));
+		// Candles error is handled separately with onErrorResume, so it won't propagate
+		// But we still need to mock it to avoid NPE
+		when(finnhubClient.getCandles(symbol))
+				.thenReturn(Mono.error(new RuntimeException("Candles unavailable")));
 
-		// Act & Assert
+		// Act & Assert - When no stale cache is available, SymbolNotFoundException 
+		// gets converted to ServiceUnavailableException
 		StepVerifier.create(service.getOverview(symbol))
-				.expectError(SymbolNotFoundException.class)
+				.expectErrorMatches(ex -> ex instanceof com.GlobeLine.stock_aggregator.exception.ServiceUnavailableException
+						&& ex.getCause() instanceof SymbolNotFoundException)
 				.verify();
 
 		verify(eventObserver).onCacheMiss();
