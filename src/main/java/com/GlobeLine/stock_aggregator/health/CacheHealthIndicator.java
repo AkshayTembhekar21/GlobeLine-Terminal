@@ -38,51 +38,22 @@ public class CacheHealthIndicator implements HealthIndicator {
 	@Override
 	public Health health() {
 		try {
-			// Get cache statistics (only available if recordStats() was enabled in CacheConfig)
 			CacheStats stats = overviewCache.stats();
 			
-			// Perform a simple read/write test to verify cache is functional
-			String testKey = "_health_check_";
-			TickerOverviewDto testValue = null;
-			
-			// Try to perform cache operations
 			try {
-				// Clear any existing test value
-				overviewCache.invalidate(testKey);
+				overviewCache.invalidate("_health_check_");
 				
-				// The cache should be functional - we don't need to actually write/read
-				// The stats will tell us if it's working
-				
-				// Calculate hit rate percentage
 				long requestCount = stats.requestCount();
 				long hitCount = stats.hitCount();
 				double hitRate = requestCount > 0 ? (double) hitCount / requestCount * 100.0 : 0.0;
-				
-				// Calculate eviction rate
 				long evictionCount = stats.evictionCount();
-				
-				// Get current cache size (approximate)
 				long estimatedSize = overviewCache.estimatedSize();
 				
-				// Determine health status based on cache metrics
-				Health.Builder healthBuilder;
-				
-				// Cache is UP if:
-				// - Hit rate is reasonable (or no requests yet)
-				// - No excessive evictions (or cache is small)
-				boolean isHealthy = true;
-				
-				if (requestCount > 100) {
-					// After 100 requests, we expect some reasonable hit rate
-					// Low hit rate (< 10%) might indicate cache isn't being utilized
-					if (hitRate < 10.0) {
-						logger.warn("Cache health check: Low hit rate of {}% after {} requests", hitRate, requestCount);
-						// This is not necessarily DOWN, just a warning
-					}
+				if (requestCount > 100 && hitRate < 10.0) {
+					logger.warn("Cache health check: Low hit rate of {}% after {} requests", hitRate, requestCount);
 				}
 				
-				// Build health response with detailed cache statistics
-				healthBuilder = Health.up()
+				return Health.up()
 						.withDetail("cache", "overviewCache")
 						.withDetail("status", "operational")
 						.withDetail("estimatedSize", estimatedSize)
@@ -93,14 +64,10 @@ public class CacheHealthIndicator implements HealthIndicator {
 						.withDetail("evictionCount", evictionCount)
 						.withDetail("loadCount", stats.loadCount())
 						.withDetail("totalLoadTime", stats.totalLoadTime())
-						.withDetail("averageLoadPenalty", stats.averageLoadPenalty());
-				
-				logger.debug("Cache health check passed - hit rate: {}%, size: {}", hitRate, estimatedSize);
-				
-				return healthBuilder.build();
+						.withDetail("averageLoadPenalty", stats.averageLoadPenalty())
+						.build();
 				
 			} catch (Exception cacheOpEx) {
-				// Cache operations failed
 				logger.error("Cache health check failed: Cache operations not functional", cacheOpEx);
 				return Health.down()
 						.withDetail("cache", "overviewCache")
@@ -110,7 +77,6 @@ public class CacheHealthIndicator implements HealthIndicator {
 			}
 			
 		} catch (Exception ex) {
-			// Unexpected error accessing cache
 			logger.error("Cache health check failed: Unexpected error", ex);
 			return Health.down()
 					.withDetail("cache", "overviewCache")

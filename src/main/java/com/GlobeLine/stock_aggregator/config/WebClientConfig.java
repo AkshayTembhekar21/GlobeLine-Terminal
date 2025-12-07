@@ -26,10 +26,9 @@ public class WebClientConfig {
 
 	@Bean
 	public WebClient finnhubWebClient(FinnhubApiProperties properties) {
-		// Configure HTTP client with timeouts to prevent hanging requests
 		HttpClient httpClient = HttpClient.create()
-				.responseTimeout(Duration.ofSeconds(15)) // Total time to receive full response: 15 seconds
-				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000); // Time to establish connection: 5 seconds
+				.responseTimeout(Duration.ofSeconds(15))
+				.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
 
 		return WebClient.builder()
 				.baseUrl(properties.baseUrl())
@@ -40,52 +39,34 @@ public class WebClientConfig {
 				.build();
 	}
 
-	/**
-	 * Comprehensive logging filter that logs both request and response with latency.
-	 * 
-	 * This filter:
-	 * - Logs outgoing request details (method, URL)
-	 * - Measures time from request to response
-	 * - Logs response status and latency
-	 * - Provides error context when requests fail
-	 * 
-	 * Uses Reactor's doOn operators to add logging without blocking the reactive flow.
-	 */
 	private ExchangeFilterFunction logRequestAndResponseWithLatency() {
 		return (clientRequest, next) -> {
 			Instant startTime = Instant.now();
 			String method = clientRequest.method().name();
 			String url = clientRequest.url().toString();
 			
-			// Log outgoing request
 			if (logger.isDebugEnabled()) {
 				logger.debug("Outgoing request to Finnhub: {} {}", method, url);
 			}
 			
-			// Execute the request and wrap the response with logging
 			return next.exchange(clientRequest)
 					.doOnSuccess(response -> {
-						// Calculate latency
 						Duration duration = Duration.between(startTime, Instant.now());
 						int statusCode = response.statusCode().value();
 						
-						// Log successful response with latency
 						if (logger.isDebugEnabled()) {
 							logger.debug("Received response from Finnhub: {} in {}ms", 
 									statusCode, duration.toMillis());
 						}
 						
-						// Warn about error responses with context
 						if (response.statusCode().isError()) {
 							logger.warn("Finnhub API returned error: {} for {} {} (took {}ms)", 
 									statusCode, method, url, duration.toMillis());
 						}
 					})
 					.doOnError(error -> {
-						// Calculate latency even for errors
 						Duration duration = Duration.between(startTime, Instant.now());
 						
-						// Log error with full context
 						if (error instanceof WebClientResponseException webClientError) {
 							HttpStatus status = HttpStatus.resolve(webClientError.getStatusCode().value());
 							logger.error("Finnhub API request failed: {} {} for {} {} (took {}ms) - {}", 

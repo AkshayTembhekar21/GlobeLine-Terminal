@@ -7,8 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 /**
- * Metrics instrumentation for stock aggregation operations.
- * This class handles all metrics recording, keeping business logic separate from observability concerns.
+ * Centralized metrics for stock aggregation operations.
  */
 @Component
 public class AggregationMetrics {

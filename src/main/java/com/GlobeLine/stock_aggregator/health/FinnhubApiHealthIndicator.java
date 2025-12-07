@@ -31,8 +31,8 @@ public class FinnhubApiHealthIndicator implements HealthIndicator {
 
 	private static final Logger logger = LoggerFactory.getLogger(FinnhubApiHealthIndicator.class);
 	
-	private static final String HEALTH_CHECK_SYMBOL = "AAPL"; // Well-known symbol for health checks
-	private static final Duration HEALTH_CHECK_TIMEOUT = Duration.ofSeconds(5); // Short timeout for health checks
+	private static final String HEALTH_CHECK_SYMBOL = "AAPL";
+	private static final Duration HEALTH_CHECK_TIMEOUT = Duration.ofSeconds(5);
 	
 	private final FinnhubClient finnhubClient;
 	private final FinnhubApiProperties apiProperties;
@@ -45,17 +45,14 @@ public class FinnhubApiHealthIndicator implements HealthIndicator {
 	@Override
 	public Health health() {
 		try {
-			// Perform a lightweight health check - fetch quote for a known symbol
-			// We use timeout() to ensure the health check doesn't hang
 			finnhubClient.getQuote(HEALTH_CHECK_SYMBOL)
 					.timeout(HEALTH_CHECK_TIMEOUT)
 					.retryWhen(Retry.backoff(1, Duration.ofMillis(100))
 							.filter(WebClientResponseException.TooManyRequests.class::isInstance))
 					.doOnSuccess(quote -> logger.debug("Finnhub API health check passed for symbol: {}", HEALTH_CHECK_SYMBOL))
 					.doOnError(error -> logger.warn("Finnhub API health check failed: {}", error.getMessage()))
-					.block(); // Block because HealthIndicator.health() must be synchronous
+					.block();
 			
-			// If we reach here, the API call succeeded
 			return Health.up()
 					.withDetail("api", "Finnhub API")
 					.withDetail("baseUrl", apiProperties.baseUrl())
@@ -64,21 +61,17 @@ public class FinnhubApiHealthIndicator implements HealthIndicator {
 					.build();
 					
 		} catch (WebClientResponseException ex) {
-			// HTTP error response from API
 			int statusCode = ex.getStatusCode().value();
 			String errorMessage = "HTTP " + statusCode;
 			
 			if (statusCode == 401 || statusCode == 403) {
-				// API key issue - this is a configuration problem
 				logger.error("Finnhub API health check failed: Unauthorized ({} - {}) - check API key configuration", 
 						statusCode, ex.getStatusText(), ex);
 				errorMessage = "Unauthorized - invalid API key";
 			} else if (statusCode >= 500) {
-				// Server error - API is having issues
 				logger.warn("Finnhub API health check failed: Server error ({})", statusCode, ex);
 				errorMessage = "Server error - service unavailable";
 			} else {
-				// Other HTTP errors (4xx)
 				logger.warn("Finnhub API health check failed: HTTP error ({})", statusCode, ex);
 				errorMessage = "HTTP error " + statusCode;
 			}
@@ -92,14 +85,12 @@ public class FinnhubApiHealthIndicator implements HealthIndicator {
 					.build();
 					
 		} catch (Exception ex) {
-			// Check if this is a timeout-related exception
 			String errorMessage = ex.getMessage();
 			String errorType = ex.getClass().getSimpleName();
 			boolean isTimeout = errorType.contains("Timeout") || 
 							   (errorMessage != null && errorMessage.toLowerCase().contains("timeout"));
 			
 			if (isTimeout) {
-				// Request timed out - API is slow or unreachable
 				logger.warn("Finnhub API health check failed: Request timeout after {} seconds", HEALTH_CHECK_TIMEOUT.getSeconds(), ex);
 				return Health.down()
 						.withDetail("api", "Finnhub API")
@@ -109,7 +100,6 @@ public class FinnhubApiHealthIndicator implements HealthIndicator {
 						.build();
 			}
 			
-			// Any other error - network issues, unexpected errors, etc.
 			logger.error("Finnhub API health check failed: Unexpected error", ex);
 			return Health.down()
 					.withDetail("api", "Finnhub API")
