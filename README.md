@@ -25,7 +25,7 @@ A Spring Boot reactive application that aggregates stock market data from Finnhu
 
 - Java 17 or higher
 - Maven 3.6+
-- PostgreSQL (optional, for future database features)
+- Docker and Docker Compose (for local PostgreSQL infrastructure)
 - Finnhub API key ([Get one here](https://finnhub.io/))
 
 ## Setup
@@ -48,7 +48,38 @@ finnhub.api.key=your-api-key-here
 
 **Note**: For production, consider using environment variables or AWS Secrets Manager instead of hardcoding the key.
 
-### 3. Run the Application
+### 3. Start Local Infrastructure (Optional)
+
+For local development with PostgreSQL, use Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+This starts:
+- **PostgreSQL** on port `5432`
+  - Database: `stock_aggregator`
+  - Username: `stock_user`
+  - Password: `stock_password`
+- **pgAdmin** on port `5050` (optional database management UI)
+  - Email: `admin@stockaggregator.local`
+  - Password: `admin`
+
+To stop the infrastructure:
+
+```bash
+docker-compose down
+```
+
+To stop and remove all data:
+
+```bash
+docker-compose down -v
+```
+
+**Note**: The application currently has database auto-configuration disabled. When you're ready to use persistence, update `application.properties` to enable database connections.
+
+### 4. Run the Application
 
 ```bash
 mvn spring-boot:run
@@ -181,9 +212,20 @@ mvn clean package
 mvn test
 ```
 
+## Local Development Infrastructure
+
+The project includes a `docker-compose.yml` file for local PostgreSQL setup:
+
+- **PostgreSQL 16** (Alpine-based, lightweight)
+- **pgAdmin 4** (Database management UI)
+- **Health checks** for service readiness
+- **Persistent volumes** for data storage
+
+See the "Start Local Infrastructure" section above for usage instructions.
+
 ## Future Enhancements
 
-- [ ] Database persistence (PostgreSQL)
+- [ ] Enable database persistence (PostgreSQL infrastructure ready)
 - [ ] Redis cache for distributed caching
 - [ ] Additional data providers
 - [ ] WebSocket support for real-time updates

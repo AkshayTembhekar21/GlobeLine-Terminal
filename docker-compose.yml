@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stock-aggregator-app
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stock_aggregator
+      SPRING_DATASOURCE_USERNAME: stock_user
+      SPRING_DATASOURCE_PASSWORD: stock_password
+      FINNHUB_API_BASE_URL: https://finnhub.io/api/v1
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-d2d6jn1r01qjem5jb400d2d6jn1r01qjem5jb40g}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - stock-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: stock-aggregator-postgres
+    environment:
+      POSTGRES_DB: stock_aggregator
+      POSTGRES_USER: stock_user
+      POSTGRES_PASSWORD: stock_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stock_user -d stock_aggregator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stock-network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: stock-aggregator-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@stockaggregator.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - stock-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  stock-network:
+    driver: bridge
+

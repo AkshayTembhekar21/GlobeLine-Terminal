@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea
+.vscode
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings
+
+# Documentation
+*.md
+!README.md
+HELP.md
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Test files
+src/test/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
