@@ -12,13 +12,18 @@ import com.GlobeLine.stock_aggregator.dto.TickerOverviewDto;
 import com.GlobeLine.stock_aggregator.exception.ServiceUnavailableException;
 import com.GlobeLine.stock_aggregator.service.AggregatorService;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import reactor.core.publisher.Mono;
 
-/**
- * REST controller for ticker overview endpoint.
- */
 @RestController
 @RequestMapping("/api/ticker")
+@Tag(name = "Ticker", description = "Stock ticker overview endpoints")
 public class TickerController {
 
 	private final AggregatorService aggregatorService;
@@ -27,15 +32,33 @@ public class TickerController {
 		this.aggregatorService = aggregatorService;
 	}
 
-	/**
-	 * GET /api/ticker/{symbol}/overview
-	 * Returns a comprehensive overview for the given stock symbol.
-	 * 
-	 * @param symbol Stock symbol (e.g., "AAPL")
-	 * @return Ticker overview with company profile, quote, financials, OHLC data, and description
-	 */
+	@Operation(
+			summary = "Get ticker overview",
+			description = "Returns a comprehensive overview for a stock symbol including company profile, " +
+					"real-time quote data, financial metrics, 1-month OHLC data for charting, and company description. " +
+					"All data is aggregated from Finnhub API and cached for 30 seconds.")
+	@ApiResponses(value = {
+			@ApiResponse(
+					responseCode = "200",
+					description = "Successfully retrieved ticker overview",
+					content = @Content(schema = @Schema(implementation = TickerOverviewDto.class))),
+			@ApiResponse(
+					responseCode = "404",
+					description = "Symbol not found",
+					content = @Content),
+			@ApiResponse(
+					responseCode = "503",
+					description = "Service temporarily unavailable (may return stale cached data if available)",
+					content = @Content),
+			@ApiResponse(
+					responseCode = "500",
+					description = "Internal server error",
+					content = @Content)
+	})
 	@GetMapping("/{symbol}/overview")
-	public Mono<ResponseEntity<TickerOverviewDto>> getOverview(@PathVariable String symbol) {
+	public Mono<ResponseEntity<TickerOverviewDto>> getOverview(
+			@Parameter(description = "Stock symbol (e.g., AAPL, MSFT, GOOGL)", required = true, example = "AAPL")
+			@PathVariable String symbol) {
 		return aggregatorService.getOverview(symbol)
 				.map(overview -> ResponseEntity.ok(overview))
 				.onErrorResume(SymbolNotFoundException.class, ex -> 

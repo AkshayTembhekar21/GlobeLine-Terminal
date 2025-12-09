@@ -19,6 +19,7 @@ A Spring Boot reactive application that aggregates stock market data from Finnhu
 - **PostgreSQL** (for future persistence)
 - **Flyway** (Database migrations)
 - **Caffeine Cache** (In-memory caching)
+- **SpringDoc OpenAPI** (API documentation with Swagger UI)
 - **Maven**
 
 ## Prerequisites
@@ -94,6 +95,21 @@ Or using the Maven wrapper:
 The application will start on `http://localhost:8080`
 
 ## API Documentation
+
+### Interactive API Documentation (Swagger UI)
+
+Once the application is running, you can access the interactive API documentation at:
+
+- **Swagger UI**: `http://localhost:8080/swagger-ui.html`
+- **OpenAPI JSON**: `http://localhost:8080/api-docs`
+
+The Swagger UI provides:
+- Interactive API explorer to test endpoints directly from the browser
+- Complete request/response schemas
+- Example values and parameter descriptions
+- Try-it-out functionality to execute API calls
+
+### API Endpoints
 
 ### Get Ticker Overview
 
@@ -178,7 +194,8 @@ src/main/java/com/GlobeLine/stock_aggregator/
 ├── config/                 # Configuration Classes
 │   ├── WebClientConfig.java
 │   ├── CacheConfig.java
-│   └── FinnhubApiProperties.java
+│   ├── FinnhubApiProperties.java
+│   └── OpenApiConfig.java
 └── exception/              # Custom Exceptions
     └── ServiceUnavailableException.java
 ```
