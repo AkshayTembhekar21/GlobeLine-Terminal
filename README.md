@@ -19,6 +19,7 @@ A Spring Boot reactive application that aggregates stock market data from Finnhu
 - **PostgreSQL** (for future persistence)
 - **Flyway** (Database migrations)
 - **Caffeine Cache** (In-memory caching)
+- **Resilience4j** (Rate limiting and resilience patterns)
 - **SpringDoc OpenAPI** (API documentation with Swagger UI)
 - **Maven**
 
@@ -162,6 +163,7 @@ curl http://localhost:8080/api/ticker/AAPL/overview
 **Response Codes:**
 - `200 OK`: Success
 - `404 NOT FOUND`: Invalid stock symbol
+- `429 TOO MANY REQUESTS`: Rate limit exceeded (100 requests per minute)
 - `503 SERVICE UNAVAILABLE`: Provider API temporarily unavailable (may return stale cached data)
 - `500 INTERNAL SERVER ERROR`: Unexpected error
 
@@ -195,9 +197,11 @@ src/main/java/com/GlobeLine/stock_aggregator/
 │   ├── WebClientConfig.java
 │   ├── CacheConfig.java
 │   ├── FinnhubApiProperties.java
-│   └── OpenApiConfig.java
+│   ├── OpenApiConfig.java
+│   └── RateLimitConfig.java
 └── exception/              # Custom Exceptions
-    └── ServiceUnavailableException.java
+    ├── ServiceUnavailableException.java
+    └── RateLimitExceededException.java
 ```
 
 ## Finnhub API Endpoints Used
@@ -209,11 +213,23 @@ src/main/java/com/GlobeLine/stock_aggregator/
 
 All requests are made in parallel for optimal performance.
 
+## Rate Limiting
+
+The application implements rate limiting using Resilience4j to protect against abuse and ensure fair usage:
+
+- **Limit**: 100 requests per minute per endpoint
+- **Algorithm**: Token bucket (smooth distribution)
+- **Response**: Returns HTTP 429 (Too Many Requests) when limit is exceeded
+- **Scope**: Applied at the service layer for the ticker overview endpoint
+
+Rate limiting is configured in `RateLimitConfig.java` and can be adjusted based on your needs.
+
 ## Error Handling
 
 - **Invalid Symbol**: Returns 404 with appropriate message
+- **Rate Limit Exceeded**: Returns 429 when request limit is exceeded
 - **Provider Failure**: Returns 503, attempts to serve stale cached data if available
-- **Rate Limiting**: Automatic retry with exponential backoff (3 retries, max 2s backoff)
+- **Provider Rate Limiting**: Automatic retry with exponential backoff (3 retries, max 2s backoff)
 
 ## Development
 
