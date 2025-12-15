@@ -8,9 +8,12 @@ import org.springframework.stereotype.Service;
 
 import com.GlobeLine.stock_aggregator.connectors.FinnhubClient.SymbolNotFoundException;
 import com.GlobeLine.stock_aggregator.dto.TickerOverviewDto;
+import com.GlobeLine.stock_aggregator.exception.RateLimitExceededException;
 import com.GlobeLine.stock_aggregator.exception.ServiceUnavailableException;
 import com.GlobeLine.stock_aggregator.metrics.AggregationMetrics;
 
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.reactor.ratelimiter.operator.RateLimiterOperator;
 import io.micrometer.core.instrument.Timer;
 import reactor.core.publisher.Mono;
 
@@ -27,10 +30,12 @@ public class AggregatorService implements AggregationEventObserver {
 
 	private final CoreAggregatorService coreService;
 	private final AggregationMetrics metrics;
+	private final RateLimiter rateLimiter;
 
-	public AggregatorService(CoreAggregatorService coreService, AggregationMetrics metrics) {
+	public AggregatorService(CoreAggregatorService coreService, AggregationMetrics metrics, RateLimiter rateLimiter) {
 		this.coreService = coreService;
 		this.metrics = metrics;
+		this.rateLimiter = rateLimiter;
 	}
 	
 	@PostConstruct
@@ -59,6 +64,9 @@ public class AggregatorService implements AggregationEventObserver {
 		Mono<TickerOverviewDto> result = coreService.getOverview(upperSymbol);
 		
 		return result
+				.transformDeferred(RateLimiterOperator.of(rateLimiter))
+				.onErrorMap(io.github.resilience4j.ratelimiter.RequestNotPermitted.class, 
+					ex -> new RateLimitExceededException("Rate limit exceeded: 100 requests per minute"))
 				.doOnSuccess(overview -> {
 					logger.debug("Successfully completed aggregation for symbol: {}", upperSymbol);
 				})

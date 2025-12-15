@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.GlobeLine.stock_aggregator.connectors.FinnhubClient.SymbolNotFoundException;
 import com.GlobeLine.stock_aggregator.dto.TickerOverviewDto;
+import com.GlobeLine.stock_aggregator.exception.RateLimitExceededException;
 import com.GlobeLine.stock_aggregator.exception.ServiceUnavailableException;
 import com.GlobeLine.stock_aggregator.service.AggregatorService;
 
@@ -47,6 +48,10 @@ public class TickerController {
 					description = "Symbol not found",
 					content = @Content),
 			@ApiResponse(
+					responseCode = "429",
+					description = "Too many requests - rate limit exceeded (100 requests per minute per IP)",
+					content = @Content),
+			@ApiResponse(
 					responseCode = "503",
 					description = "Service temporarily unavailable (may return stale cached data if available)",
 					content = @Content),
@@ -61,6 +66,9 @@ public class TickerController {
 			@PathVariable String symbol) {
 		return aggregatorService.getOverview(symbol)
 				.map(overview -> ResponseEntity.ok(overview))
+				.onErrorResume(RateLimitExceededException.class, ex -> 
+					Mono.just(ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+							.body((TickerOverviewDto) null)))
 				.onErrorResume(SymbolNotFoundException.class, ex -> 
 					Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND)
 							.body((TickerOverviewDto) null)))
